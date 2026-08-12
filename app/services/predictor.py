@@ -154,7 +154,8 @@ class PredictorService:
                 {"$set": {"pesos": semilla.to_dict()}},
                 upsert=True,
             )
-            logger.info("Pesos de pico glucémico sembrados en Mongo (clave=%s)", self._settings.pesos_mongo_clave)
+            clave = self._settings.pesos_mongo_clave
+            logger.info("Pesos de pico glucémico sembrados en Mongo (clave=%s)", clave)
         except Exception:
             logger.exception("Fallo al sembrar pesos de pico en Mongo")
         return semilla
