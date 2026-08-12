@@ -87,3 +87,25 @@ class PrediccionV2(BaseModel):
     recomendacion: str = ""
     modelo: ModeloInfo
     timestamp: datetime
+
+
+# ---------- v3 (picos glucémicos: fórmulas F1-F3 + matriz de riesgo) ----------
+
+
+class PicoGlucemicoRespuesta(BaseModel):
+    """Salida exacta del motor de picos glucémicos (F1/F2/F3 + matriz).
+
+    Campos de negocio: imc, z, pPico, casoClinico, accionAutomatizada.
+    """
+
+    model_config = SALIDA_CFG
+
+    paciente_id: str
+    imc: float = Field(ge=0.0, le=120.0)
+    z: float
+    p_pico: float = Field(ge=0.0, le=1.0)
+    caso_clinico: str
+    nivel_riesgo: str = ""
+    accion_automatizada: str
+    timestamp: datetime
+    version: str

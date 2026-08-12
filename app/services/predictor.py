@@ -13,6 +13,7 @@ from app.db.mongo import Mongo
 from app.models.features import construir_features, normalizar_ts
 from app.models.inferencia import ModeloActivo, construir_resultado_v2
 from app.models.entrenamiento import deserializar_artefacto
+from app.models.pico_glucemico import PesosPico, evaluar
 from app.schemas.prediccion import PrediccionRespuesta
 from app.schemas.telemetria import TelemetriaEntrada
 from app.services.baseline import predecir_baseline
@@ -131,3 +132,62 @@ class PredictorService:
             es_critico_general=v1.es_critico,
             version=self._settings.app_version,
         )
+
+    async def pesos_pico(self) -> PesosPico:
+        """Pesos de la red logística (F2) con fuente de verdad en Mongo.
+
+        Lee el documento `{clave: <pesos_mongo_clave>}` de la colección `modelos`;
+        si no existe, siembra los valores de Settings (fallback) y los persiste.
+        """
+        if not self._settings.mongo_uri:
+            return PesosPico.from_settings(self._settings)
+        try:
+            doc = await self._mongo.modelos.find_one({"clave": self._settings.pesos_mongo_clave})
+            if doc and doc.get("pesos"):
+                return PesosPico.from_dict(doc["pesos"])
+        except Exception:
+            logger.exception("Fallo al cargar pesos de pico desde Mongo")
+        semilla = PesosPico.from_settings(self._settings)
+        try:
+            await self._mongo.modelos.update_one(
+                {"clave": self._settings.pesos_mongo_clave},
+                {"$set": {"pesos": semilla.to_dict()}},
+                upsert=True,
+            )
+            logger.info("Pesos de pico glucémico sembrados en Mongo (clave=%s)", self._settings.pesos_mongo_clave)
+        except Exception:
+            logger.exception("Fallo al sembrar pesos de pico en Mongo")
+        return semilla
+
+    async def predecir_pico(self, telemetria: TelemetriaEntrada) -> dict[str, Any]:
+        """Motor de picos glucémicos (F1/F2/F3 + matriz de riesgo)."""
+        pesos = await self.pesos_pico()
+
+        peso = telemetria.peso
+        estatura = telemetria.estatura
+        if peso is None or estatura is None:
+            paciente, _ = await self._contexto_paciente(telemetria.paciente_id)
+            biometria = (paciente or {}).get("biometria") or {}
+            if peso is None:
+                peso = biometria.get("peso_kg")
+            if estatura is None:
+                estatura_cm = biometria.get("estatura_cm") or biometria.get("estatura_m") or 0.0
+                estatura = float(estatura_cm) / 100.0
+
+        if peso is None or estatura is None or float(estatura) <= 0:
+            raise ValueError(
+                "no hay peso/estatura (request o biometría del paciente) para calcular el IMC"
+            )
+
+        resultado = evaluar(
+            peso_kg=float(peso),
+            estatura_m=float(estatura),
+            pulso_bpm=float(telemetria.frecuencia_cardiaca),
+            sudor_us=float(telemetria.sudoracion_gsr or 0.0),
+            temperatura_c=float(telemetria.temperatura),
+            pesos=pesos,
+        )
+        resultado["paciente_id"] = telemetria.paciente_id
+        resultado["timestamp"] = datetime.now(timezone.utc)
+        resultado["version"] = self._settings.app_version
+        return resultado

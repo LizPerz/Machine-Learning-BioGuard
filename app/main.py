@@ -80,6 +80,7 @@ def build_app(mongo: Mongo | None = None, settings_override: Settings | None = N
     app.include_router(health.router)
     app.include_router(predict.v1_router)
     app.include_router(predict.v2_router)
+    app.include_router(predict.v3_router)
     app.include_router(dashboard.router)
     app.include_router(modelos.router)
     app.include_router(internal.router)

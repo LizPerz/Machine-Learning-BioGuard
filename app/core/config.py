@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     modelo_min_muestras: int = 30
     cors_origins: list[str] = ["*"]
 
+    # Pesos de la red logística de picos glucémicos (F2). Se persisten/sincronizan
+    # en Mongo (collection "modelos", doc con clave `pesos_mongo_clave`); estos
+    # valores son el fallback/semilla si Mongo no tiene el documento.
+    pesos_w0: float = -8.0
+    pesos_w1: float = 0.05
+    pesos_w2: float = 0.02
+    pesos_w3: float = -0.04
+    pesos_w4: float = 0.15
+    pesos_mongo_clave: str = "pesos_pico"
+
     worker_sync_enabled: bool = False
     features_ttl_days: int = 90
     retrain_cron: str = "0 3 * * 0"

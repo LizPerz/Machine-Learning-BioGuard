@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request, status
 
 from app.api.deps import auth_servicio, get_dashboard, get_predictor
 from app.core.limiter import limiter
-from app.schemas.prediccion import PrediccionRespuesta, PrediccionV2
+from app.schemas.prediccion import PicoGlucemicoRespuesta, PrediccionRespuesta, PrediccionV2
 from app.schemas.telemetria import TelemetriaEntrada
 from app.services.dashboard import DashboardService
 from app.services.predictor import PredictorService
@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 v1_router = APIRouter(prefix="/api/v1", tags=["predicciones-v1"])
 v2_router = APIRouter(prefix="/api/v2", tags=["predicciones-v2"])
+v3_router = APIRouter(prefix="/api/v3", tags=["picos-glucemicos"])
 
 
 @v1_router.post(
@@ -49,3 +50,19 @@ async def prediccion_v2(
     except Exception:
         logger.exception("No se pudo persistir la predicción para %s", telemetria.paciente_id)
     return PrediccionV2.model_validate(resultado)
+
+
+@limiter.limit("100/minute")
+@v3_router.post(
+    "/predicciones",
+    response_model=PicoGlucemicoRespuesta,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(auth_servicio)],
+    summary="Picos glucémicos (F1 IMC, F2 z, F3 P(Pico)) + matriz de riesgo",
+)
+async def pico_glucemico(
+    request: Request,
+    telemetria: TelemetriaEntrada,
+    predictor: PredictorService = Depends(get_predictor),
+) -> PicoGlucemicoRespuesta:
+    return PicoGlucemicoRespuesta.model_validate(await predictor.predecir_pico(telemetria))

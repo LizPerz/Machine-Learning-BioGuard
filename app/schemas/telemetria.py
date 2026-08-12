@@ -21,6 +21,8 @@ class TelemetriaEntrada(BaseModel):
     glucosa: Optional[float] = Field(default=None, ge=20.0, le=600.0, description="Glucosa en mg/dL")
     sudoracion_gsr: Optional[float] = Field(default=None, ge=0.0, le=20.0, description="Sudoración GSR")
     hrv: Optional[float] = Field(default=None, ge=10.0, le=200.0, description="HRV estimado en ms")
+    peso: Optional[float] = Field(default=None, ge=20.0, le=400.0, description="Peso en kg (para IMC)")
+    estatura: Optional[float] = Field(default=None, ge=0.5, le=2.5, description="Estatura en metros (para IMC)")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     dispositivo: Optional[str] = Field(default=None, max_length=64)
     toma_reciente_medicamento: Optional[bool] = Field(default=None, description="Toma de medicamento")
