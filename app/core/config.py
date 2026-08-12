@@ -9,7 +9,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_version: str = "2.0.0"
     debug: bool = False
-    host: str = "0.0.0.0"
+    # Host configurable desde BIOGUARD_HOST, por defecto localhost en producción
+    host: str = "localhost"  # nosec: B104 - configurable via env vars
     port: int = 8000
     log_level: str = "INFO"
 
