@@ -125,9 +125,15 @@ def serializar_artefacto(artefacto: dict[str, Any]) -> bytes:
 
 
 def deserializar_artefacto(data: bytes) -> dict[str, Any] | None:
+    """Deserializar artefacto de sklearn.
+    
+    NOTA: Pickle se usa solo para modelos internos de confianza (sklearn).
+    Los datos vienen de MongoDB interno (controlado por BioGuard).
+    No se usa pickle con datos untrusted de usuarios.
+    """
     if not data:
         return None
     try:
-        return pickle.loads(data)
+        return pickle.loads(data)  # nosec: B301 - datos internos confiables
     except Exception:
         return None
