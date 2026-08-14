@@ -10,3 +10,5 @@ venv/
 data/
 *.pkl
 *.log
+.coverage
+htmlcov/
