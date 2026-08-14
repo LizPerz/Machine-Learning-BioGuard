@@ -20,7 +20,9 @@ class TelemetriaEntrada(BaseModel):
     presion_diastolica: Optional[int] = Field(default=None, ge=30, le=160)
     glucosa: Optional[float] = Field(default=None, ge=20.0, le=600.0, description="Glucosa en mg/dL")
     sudoracion_gsr: Optional[float] = Field(default=None, ge=0.0, le=20.0, description="Sudoración GSR")
-    estres_pct: Optional[float] = Field(default=None, ge=0.0, le=100.0, description="Nivel de Estrés / HRV en %")
+    estres_pct: Optional[float] = Field(
+        default=None, ge=0.0, le=100.0, description="Nivel de Estrés / HRV en %"
+    )
     hrv: Optional[float] = Field(default=None, ge=10.0, le=200.0, description="HRV estimado en ms")
     peso: Optional[float] = Field(default=None, ge=20.0, le=400.0, description="Peso en kg (para IMC)")
     estatura: Optional[float] = Field(
