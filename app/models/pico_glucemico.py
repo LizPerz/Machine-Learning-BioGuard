@@ -1,13 +1,13 @@
 """Motor de picos glucémicos (fórmulas F1-F3 + matriz de clasificación de riesgo).
 
 F1 - IMC:         peso_kg / estatura_m^2
-F2 - z:           w0 + (w1 * Pulso) + (w2 * Sudor) + (w3 * Temp) + (w4 * IMC)
+F2 - z:           w0 + (w1 * Pulso) + (w2 * Estres) + (w3 * Temp) + (w4 * IMC)
 F3 - P(Pico):     1 / (1 + e^-z)
 
-Matriz de clasificación (misma lógica para el motor local del móvil):
-  - Hipoglucemia Nocturna: Pulso > 110 BPM, Temp < 35 °C, Sudor > 80 µS → Crítico Alto.
-  - Hiperglucemia Severa:  Pulso 95-110 BPM, Temp > 37.2 °C, Sudor < 20 µS → Moderado Alto.
-  - Estado Óptimo:          Pulso 60-80 BPM, Temp 36-36.7 °C, Sudor 15-35 µS → Bajo (Estable).
+Matriz de clasificación (sensores físicos reales del Galaxy Watch 7):
+  - Hipoglucemia (Pico Bajo): Pulso > 110 BPM, Temp < 35.0 °C, Estres > 80%   -> Crítico Alto.
+  - Hiperglucemia (Pico Alto): Pulso 95-110 BPM, Temp > 37.2 °C, Estres 60-80% -> Moderado Alto.
+  - Estado Óptimo (Medio):    Pulso 60-80 BPM, Temp 36.0-36.7 °C, Estres < 50%  -> Bajo (Estable).
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ ACCION_VIGILANCIA = "Mantener monitoreo continuo; evaluar siguiente lectura en 1
 PESOS_DEFAULT = {
     "w0": -8.0,
     "w1": 0.05,   # Pulso (bpm)
-    "w2": 0.02,   # Sudoración GSR (µS)
+    "w2": 0.03,   # Nivel de Estrés (%)
     "w3": -0.04,  # Temperatura (°C)
     "w4": 0.15,   # IMC
 }
@@ -50,7 +50,7 @@ PESOS_DEFAULT = {
 class PesosPico:
     w0: float = -8.0
     w1: float = 0.05
-    w2: float = 0.02
+    w2: float = 0.03
     w3: float = -0.04
     w4: float = 0.15
 
@@ -91,14 +91,14 @@ def calcular_imc(peso_kg: float, estatura_m: float) -> float:
 
 def calcular_z(
     pulso_bpm: float,
-    sudor_us: float,
+    estres_pct: float,
     temperatura_c: float,
     imc: float,
     pesos: PesosPico | None = None,
 ) -> float:
-    """F2: z = w0 + w1*Pulso + w2*Sudor + w3*Temp + w4*IMC."""
+    """F2: z = w0 + w1*Pulso + w2*Estres + w3*Temp + w4*IMC."""
     p = pesos or PesosPico()
-    return p.w0 + (p.w1 * pulso_bpm) + (p.w2 * sudor_us) + (p.w3 * temperatura_c) + (p.w4 * imc)
+    return p.w0 + (p.w1 * pulso_bpm) + (p.w2 * estres_pct) + (p.w3 * temperatura_c) + (p.w4 * imc)
 
 
 def calcular_p_pico(z: float) -> float:
@@ -112,14 +112,14 @@ def calcular_p_pico(z: float) -> float:
 def clasificar(
     pulso_bpm: float,
     temperatura_c: float,
-    sudor_us: float,
+    estres_pct: float,
 ) -> tuple[str, str, str]:
     """Matriz de clasificación: (caso_clinico, nivel_riesgo, accion_automatizada)."""
-    if pulso_bpm > 110.0 and temperatura_c < 35.0 and sudor_us > 80.0:
+    if pulso_bpm > 110.0 and temperatura_c < 35.0 and estres_pct > 80.0:
         return CASO_HIPO, "Critico Alto", ACCION_HIPO
-    if 95.0 <= pulso_bpm <= 110.0 and temperatura_c > 37.2 and sudor_us < 20.0:
+    if 95.0 <= pulso_bpm <= 110.0 and temperatura_c > 37.2 and 60.0 <= estres_pct <= 80.0:
         return CASO_HIPER, "Moderado Alto", ACCION_HIPER
-    if 60.0 <= pulso_bpm <= 80.0 and 36.0 <= temperatura_c <= 36.7 and 15.0 <= sudor_us <= 35.0:
+    if 60.0 <= pulso_bpm <= 80.0 and 36.0 <= temperatura_c <= 36.7 and estres_pct < 50.0:
         return CASO_OPTIMO, "Bajo (Estable)", ACCION_OPTIMO
     return CASO_VIGILANCIA, "Por evaluar", ACCION_VIGILANCIA
 
@@ -128,15 +128,15 @@ def evaluar(
     peso_kg: float,
     estatura_m: float,
     pulso_bpm: float,
-    sudor_us: float,
+    estres_pct: float,
     temperatura_c: float,
     pesos: PesosPico | None = None,
 ) -> dict[str, Any]:
     """Ejecuta F1 -> F2 -> F3 -> matriz y devuelve el bloque de salida."""
     imc = round(calcular_imc(peso_kg, estatura_m), 2)
-    z = round(calcular_z(pulso_bpm, sudor_us, temperatura_c, imc, pesos), 4)
+    z = round(calcular_z(pulso_bpm, estres_pct, temperatura_c, imc, pesos), 4)
     p_pico = round(calcular_p_pico(z), 4)
-    caso_clinico, nivel_riesgo, accion_automatizada = clasificar(pulso_bpm, temperatura_c, sudor_us)
+    caso_clinico, nivel_riesgo, accion_automatizada = clasificar(pulso_bpm, temperatura_c, estres_pct)
     return {
         "imc": imc,
         "z": z,

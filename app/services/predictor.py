@@ -184,7 +184,7 @@ class PredictorService:
             peso_kg=float(peso),
             estatura_m=float(estatura),
             pulso_bpm=float(telemetria.frecuencia_cardiaca),
-            sudor_us=float(telemetria.sudoracion_gsr or 0.0),
+            estres_pct=float(telemetria.estres_pct or 30.0),
             temperatura_c=float(telemetria.temperatura),
             pesos=pesos,
         )

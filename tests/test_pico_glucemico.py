@@ -34,19 +34,19 @@ def test_calcular_imc_estatura_invalida():
 def test_calcular_z_y_sigmoide():
     pesos = PesosPico(w0=-10.0, w1=0.05, w2=0.03, w3=-0.6, w4=0.2)
     imc = calcular_imc(80.0, 1.75)
-    z = calcular_z(pulso_bpm=120.0, sudor_us=90.0, temperatura_c=34.0, imc=imc, pesos=pesos)
+    z = calcular_z(pulso_bpm=120.0, estres_pct=85.0, temperatura_c=34.0, imc=imc, pesos=pesos)
     p = calcular_p_pico(z)
-    # z = -10 + 6 + 2.7 - 20.4 + 5.22 = -16.48 -> P muy baja
-    assert z == pytest.approx(-16.48, abs=0.01)
+    # z = -10 + 6 + 2.55 - 20.4 + 5.22 = -16.63 -> P muy baja
+    assert z == pytest.approx(-16.63, abs=0.01)
     assert 0.0 <= p <= 1.0
     assert p == pytest.approx(1.0 / (1.0 + math.exp(-z)))
 
 
 def test_calcular_z_hipo_activa_probabilidad_alta():
-    # Pulso 130, sudor 95, temp 34.4, IMC 22: z alto -> P alto
+    # Pulso 130, estres 90, temp 34.4, IMC 22: z alto -> P alto
     pesos = PesosPico()
     imc = calcular_imc(60.0, 1.65)
-    z = calcular_z(130.0, 95.0, 34.4, imc, pesos)
+    z = calcular_z(130.0, 90.0, 34.4, imc, pesos)
     assert calcular_p_pico(z) > 0.9
 
 
@@ -58,14 +58,14 @@ def test_matriz_hipoglucemia_nocturna():
 
 
 def test_matriz_hiperglucemia_severa():
-    caso, nivel, accion = clasificar(100.0, 37.5, 12.0)
+    caso, nivel, accion = clasificar(100.0, 37.5, 65.0)
     assert caso == CASO_HIPER
     assert nivel == "Moderado Alto"
     assert accion == ACCION_HIPER
 
 
 def test_matriz_estado_optimo():
-    caso, nivel, accion = clasificar(72.0, 36.4, 25.0)
+    caso, nivel, accion = clasificar(72.0, 36.4, 40.0)
     assert caso == CASO_OPTIMO
     assert nivel == "Bajo (Estable)"
     assert accion == ACCION_OPTIMO
@@ -73,12 +73,12 @@ def test_matriz_estado_optimo():
 
 def test_matriz_limites_inclusivos():
     assert clasificar(110.0, 35.0, 80.0)[0] != CASO_HIPO  # 110 no es > 110
-    assert clasificar(95.0, 37.3, 19.0)[0] == CASO_HIPER  # 95 inclusive
-    assert clasificar(60.0, 36.0, 15.0)[0] == CASO_OPTIMO  # límites inferiores inclusive
+    assert clasificar(95.0, 37.3, 70.0)[0] == CASO_HIPER  # 95 inclusive
+    assert clasificar(60.0, 36.0, 45.0)[0] == CASO_OPTIMO  # límites inferiores inclusive
 
 
 def test_matriz_fuera_de_patron_vigilancia():
-    caso, nivel, accion = clasificar(90.0, 36.5, 45.0)
+    caso, nivel, accion = clasificar(90.0, 36.5, 55.0)
     assert caso == CASO_VIGILANCIA
 
 
@@ -87,7 +87,7 @@ def test_evaluar_bloque_salida():
         peso_kg=80.0,
         estatura_m=1.75,
         pulso_bpm=72.0,
-        sudor_us=25.0,
+        estres_pct=40.0,
         temperatura_c=36.4,
         pesos=PesosPico(),
     )
