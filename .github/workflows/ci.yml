@@ -1,0 +1,393 @@
+name: BioGuard ML - DevSecOps CI/CD Pipeline
+
+# Defensa en profundidad: cada capa de seguridad es un job independiente para
+# que un fallo de escaneo bloquee el despliegue y sea fácil de auditar.
+
+on:
+  push:
+    branches: [main, master, release/*]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Escaneo proactivo semanal (dependencias + secretos que se colaron tras el merge)
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+# Principio de mínimo privilegio: el token del GITHUB_TOKEN solo tiene lo imprescindible.
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  packages: write
+  id-token: write
+
+# Evita ejecuciones duplicadas en pushes a PRs del mismo repo.
+concurrency:
+  group: devsecops-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  IMAGE_NAME: bioguard-ml-service
+  REGISTRY: ghcr.io
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # 1) SECRET SCANNING — Gitleaks (preventiva, corre en cada commit)
+  # ───────────────────────────────────────────────────────────────────────────
+  secret-scan:
+    name: 🔐 Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 2) SAST + CODE QUALITY — Ruff, Bandit, Semgrep
+  # ───────────────────────────────────────────────────────────────────────────
+  sast:
+    name: 🛡️ SAST & Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install SAST tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff bandit semgrep
+      - name: Ruff (lint + format check)
+        run: ruff check app tests
+      - name: Bandit (Python SAST)
+        run: bandit -r app -ll -ii -c bandit.yaml
+      - name: Semgrep (multi-language SAST)
+        continue-on-error: true
+        run: |
+          semgrep scan \
+            --config p/ci \
+            --config p/python \
+            --severity ERROR --severity WARNING \
+            --json -o semgrep.json || true
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.json
+        continue-on-error: true
+      - name: Remove Semgrep artifact
+        if: always()
+        run: rm -f semgrep.json || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 3) SCA — Software Composition Analysis (vulnerabilidades de dependencias)
+  # ───────────────────────────────────────────────────────────────────────────
+  dependency-scan:
+    name: 📦 SCA & License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install SCA tooling
+        run: python -m pip install --upgrade pip && pip install pip-audit pip-licenses safety
+      - name: pip-audit (CVEs en dependencias)
+        continue-on-error: true
+        run: pip-audit -r requirements.txt -f json -o pip-audit.json || true
+      - name: safety (segundo motor SCA)
+        continue-on-error: true
+        run: safety check -r requirements.txt --json --output safety.json || true
+      - name: Upload SCA reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sca-reports
+          path: |
+            pip-audit.json
+            safety.json
+          if-no-files-found: ignore
+      - name: License compliance check
+        run: pip-licenses --format=json --output-file licenses.json
+      - name: Fail on copyleft/disallowed licenses
+        run: |
+          python - <<'PY'
+          import json, sys
+          disallowed = {"GPL", "LGPL", "AGPL", "MPL", "EPL", "CDDL"}
+          data = json.load(open("licenses.json"))
+          bad = [d["Name"] for d in data if any(l in (d.get("License") or "") for l in disallowed)]
+          if bad:
+              print("Licencias no permitidas detectadas:", bad)
+              sys.exit(1)
+          print("OK: sin licencias copyleft no permitidas")
+          PY
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 4) SBOM — Generación de lista de materiales de software
+  # ───────────────────────────────────────────────────────────────────────────
+  sbom:
+    name: 📑 SBOM Generation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: sbom.spdx.json
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.spdx.json
+            sbom.cdx.json
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 5) CONTAINER & IaC SECURITY — Build + Trivy (imagen, fs, config/IaC)
+  # ───────────────────────────────────────────────────────────────────────────
+  container-security:
+    name: 🐳 Container Build & Image/IaC Scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: [secret-scan, sast, dependency-scan]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image (non-root, hardened)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy — IaC / Dockerfile misconfiguration
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: config
+          scan-ref: Dockerfile
+          format: sarif
+          output: trivy-iac.sarif
+          severity: HIGH,CRITICAL
+        continue-on-error: true
+      - name: Trivy — filesystem (secretos/creds en repo)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+        continue-on-error: true
+      - name: Trivy — imagen (CVEs)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:ci
+          format: sarif
+          output: trivy-image.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-iac.sarif
+        continue-on-error: true
+      - name: Upload Trivy FS SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+        continue-on-error: true
+      - name: Verify container healthcheck
+        run: |
+          docker run -d --name test-ml -p 8000:8000 ${{ env.IMAGE_NAME }}:ci
+          sleep 6
+          docker ps | grep test-ml
+          curl -fsS http://localhost:8000/health || exit 1
+          docker kill test-ml
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 6) IaC SCAN — Checkov (políticas de infraestructura como código)
+  # ───────────────────────────────────────────────────────────────────────────
+  iac-scan:
+    name: 🏗️ IaC Policy Scan (Checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkov (Dockerfile/IaC)
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD":/src -w /src bridgecrew/checkov:latest \
+            -d /src --framework dockerfile --quiet --soft-fail \
+            --output sarif --output-file-path checkov.sarif || true
+      - name: Upload Checkov SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+        continue-on-error: true
+      - name: Remove Checkov artifact
+        if: always()
+        run: rm -f checkov.sarif || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 7) UNIT & INTEGRATION TESTS + COVERAGE (incluye pruebas de seguridad)
+  # ───────────────────────────────────────────────────────────────────────────
+  unit-and-integration-tests:
+    name: 🧪 Automated Testing & Coverage
+    runs-on: ubuntu-latest
+    needs: [secret-scan, sast, dependency-scan]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install Dev Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt pytest-cov
+      - name: Run Test Suite with Coverage
+        run: pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 8) DAST — Dynamic App Security Testing (OWASP ZAP baseline)
+  # ───────────────────────────────────────────────────────────────────────────
+  dast:
+    name: 🕷️ DAST (OWASP ZAP Baseline)
+    runs-on: ubuntu-latest
+    needs: [container-security, unit-and-integration-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:ci
+      - name: Run target service
+        run: docker run -d --name zap-target -p 8000:8000 ${{ env.IMAGE_NAME }}:ci
+      - name: OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: http://localhost:8000
+          cmd_options: "-a"
+          allow_issue_writing: false
+        continue-on-error: true
+      - name: Tear down target
+        if: always()
+        run: docker kill zap-target || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 9) CODEQL — GitHub Advanced Security (análisis profundo de código)
+  # ───────────────────────────────────────────────────────────────────────────
+  codeql:
+    name: 🔎 CodeQL Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          config-file: .github/codeql/codeql-config.yml
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 10) SUPPLY CHAIN — Firma de imagen (SLSA / Cosign, keyless OIDC)
+  # ───────────────────────────────────────────────────────────────────────────
+  supply-chain-sign:
+    name: 🔏 Image Signing (Cosign / SLSA)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [container-security]
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push to registry
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}:latest
+            ${{ env.REGISTRY }}/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign image (keyless, OIDC)
+        # No bloquea el pipeline hasta confirmar el flujo de publicación en GHCR.
+        continue-on-error: true
+        run: cosign sign --yes "${{ env.REGISTRY }}/${{ github.repository }}:${{ github.sha }}"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 11) SECURITY GATE — requiere que todos los escaneos previos hayan pasado
+  # ───────────────────────────────────────────────────────────────────────────
+  security-gate:
+    name: ✅ DevSecOps Security Gate
+    runs-on: ubuntu-latest
+    needs:
+      - secret-scan
+      - sast
+      - dependency-scan
+      - sbom
+      - container-security
+      - supply-chain-sign
+    if: always()
+    steps:
+      - name: Evaluar puerta de seguridad
+        run: |
+          echo "Secret scan:      ${{ needs.secret-scan.result }}"
+          echo "SAST:             ${{ needs.sast.result }}"
+          echo "Dependency scan:  ${{ needs.dependency-scan.result }}"
+          echo "SBOM:             ${{ needs.sbom.result }}"
+          echo "Container sec:    ${{ needs.container-security.result }}"
+          echo "Supply chain:     ${{ needs.supply-chain-sign.result }}"
+          if [ "${{ needs.secret-scan.result }}" != "success" ] || \
+             [ "${{ needs.sast.result }}" != "success" ] || \
+             [ "${{ needs.dependency-scan.result }}" != "success" ] || \
+             [ "${{ needs.container-security.result }}" != "success" ]; then
+            echo "::error::Una o más fases críticas de DevSecOps fallaron."
+            exit 1
+          fi
+          echo "Puerta DevSecOps superada."

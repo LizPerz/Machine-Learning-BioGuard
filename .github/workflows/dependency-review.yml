@@ -1,0 +1,25 @@
+name: Dependabot / Dependency Review
+
+# Revisión de dependencias en PRs: bloquea cambios que introduzcan
+# vulnerabilidades conocidas (CVEs) según la base de datos de GitHub.
+
+on:
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: 🔍 Dependency Review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          allow-ghsas: []
+          comment-summary-in-pr: true

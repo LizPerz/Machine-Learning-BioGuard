@@ -1,0 +1,13 @@
+# Bandit — SAST de Python. Se escanea solo `app` (no los tests).
+# Umbral aplicado en CI: -ll -ii (severidad media/alta, confianza media/alta).
+
+exclude_dirs:
+  - tests
+  - .venv
+  - venv
+
+skips:
+  # B101 (assert) — no se usa en `app` en producción; se ignora por si acaso.
+  - B101
+  # B104 (bind to 0.0.0.0) — el host es configurable vía env y está marcado nosec.
+  - B104

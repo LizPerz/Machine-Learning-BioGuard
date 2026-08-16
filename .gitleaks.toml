@@ -1,0 +1,21 @@
+# Gitleaks — detección de secretos en el repositorio.
+# Hereda las reglas por defecto de Gitleaks y añade allowlists específicos
+# del proyecto (placeholders de documentación y secretos de prueba ficticios).
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Falsos positivos conocidos y placeholders de documentación"
+paths = [
+  '''.*\.md$''',
+  '''\.env\.example$''',
+]
+regexes = [
+  # Secreto de prueba ficticio usado en tests/ (no es un secreto real)
+  '''clave-servicio-muy-segura-min-32-caracteres-1234''',
+  # Placeholders de .env.example
+  '''<clave-secreta-min-32-caracteres>''',
+  '''<ml-user>:<password>@<cluster>''',
+  '''<password>''',
+]

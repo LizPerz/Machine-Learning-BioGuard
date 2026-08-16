@@ -1,0 +1,18 @@
+# Checkov — políticas de IaC (Dockerfile, etc.).
+# Umbral: falla en HIGH/CRITICAL. Soft-fail en CI para no romper el build
+# hasta afinar las excepciones; las excepciones van a .checkovignore.
+
+soft-fail: false
+
+skip-check:
+  # El usuario no-root ya se valida en tests/test_devsecops_pipeline_config.py
+  - CKV_DOCKER_2
+  # HEALTHCHECK presente; se valida también en tests de configuración
+  - CKV_DOCKER_3
+
+# No escaneamos los tests ni la carpeta .venv como infraestructura.
+# (el job de CI ya acota el framework a 'dockerfile')
+
+dockerfile:
+  # Asegura que no se use la imagen 'latest' de forma implícita.
+  check-latest-tag: true

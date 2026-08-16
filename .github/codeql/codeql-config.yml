@@ -1,0 +1,9 @@
+name: "CodeQL Config (BioGuard ML)"
+
+paths-ignore:
+  - "tests/**"
+  - "**/*.md"
+  - "docs/**"
+
+queries:
+  - uses: security-and-quality

@@ -1,0 +1,8 @@
+# Trivy — excepciones documentadas para el escaneo de la imagen/fs.
+# Toda excepción debe tener justificación y fecha de revisión (máx. trimestral).
+#
+# Formato:
+#   # CVE-XXXX-XXXX | motivo | revisar: YYYY-MM-DD | responsable
+#
+# Ejemplo (no activo hasta que sea necesario):
+# CVE-2024-0000 # Dependencia transitiva sin fix en versión soportada | revisar: 2026-12-31 | sec-team

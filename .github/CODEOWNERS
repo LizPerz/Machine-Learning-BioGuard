@@ -1,0 +1,18 @@
+# CODEOWNERS — revisión obligatoria de cambios (DevSecOps).
+# Toda PR que toque código de la app o la pipeline de seguridad requiere aprobación.
+
+* @bioguard/security-team
+
+# Lógica de negocio / API — requiere review de un mantenedor
+/app/ @bioguard/backend-team @bioguard/security-team
+
+# Pipeline DevSecOps y configuración de seguridad — requiere review de secops
+/.github/ @bioguard/security-team
+/.gitleaks.toml @bioguard/security-team
+/bandit.yaml @bioguard/security-team
+/.trivyignore @bioguard/security-team
+/.checkov.yaml @bioguard/security-team
+/requirements*.txt @bioguard/security-team
+
+# Pruebas de seguridad
+/tests/test_devsecops_*.py @bioguard/security-team
